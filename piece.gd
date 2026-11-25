@@ -11,7 +11,7 @@ var grid_position: Vector2i = Vector2i.ZERO
 const TEXTURES = {
 	1: "res://assets/1.Agente Infiltrado.png",
 	2: "res://assets/2.Fuzileiro.png",
-	3: "res://assets/3.Lançador de Mísseis.png",
+	3: "res://assets/3.Lancador de Misseis.png",
 	4: "res://assets/4.Atirador de Elite.png",
 	5: "res://assets/5.General.png"
 }

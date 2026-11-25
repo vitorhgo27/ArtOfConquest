@@ -4,7 +4,7 @@ const GRID_SIZE = 8
 const CELL_SIZE = 64 # Tamanho em pixels de cada quadrado do tabuleiro
 
 # O tabuleiro começa no topo absoluto (0,0) pois a label superior foi removida
-const OFFSET_Y = 0  
+const OFFSET_Y = 0
 
 # Matriz bidimensional para rastrear onde as peças estão logicamente
 var board = []
@@ -22,6 +22,11 @@ const RED_FLAG = Vector2i(4, 7)
 # Caminhos atualizados para buscar os nós dentro da Sidebar lateral
 @onready var status_label = $Sidebar/StatusLabel
 @onready var reset_button = $Sidebar/ResetButton
+
+# Cena inicial selecionada no Inspetor
+@export var menu_scene: PackedScene = preload("res://menu.tscn")
+var pause_layer: CanvasLayer
+var botoes_fim_partida: VBoxContainer
 
 # Variáveis da fase de posicionamento
 enum GameState { SETUP_AZUL, PLAYING, GAME_OVER }
@@ -44,10 +49,13 @@ var snd_combate1 = load("res://assets/sounds/som_combate1.mp3")
 var snd_combate2 = load("res://assets/sounds/som_combate2.mp3")
 
 func _ready():
+	criar_menu_pausa()
+	criar_botoes_fim_partida()
+
 	# Conecta o sinal de desenho do TextureRect para renderizar a grade por cima dele
 	if board_texture:
 		board_texture.draw.connect(_on_board_texture_draw)
-		
+
 	start_new_game()
 
 # Função auxiliar para criar efeitos sonoros dinâmicos (Volume padrão mais alto que a BGM)
@@ -65,7 +73,7 @@ func play_sfx(stream: AudioStream):
 func start_new_game():
 	for child in pieces_container.get_children():
 		child.queue_free()
-		
+
 	board.clear()
 	init_board()
 	current_turn = GamePiece.Player.BLUE
@@ -74,15 +82,16 @@ func start_new_game():
 	current_state = GameState.SETUP_AZUL
 	blue_pieces_to_place = [1, 1, 2, 2, 3, 3, 4, 4]
 	is_animating = false
-	
+
 	reset_button.visible = false
+	botoes_fim_partida.hide()
 	set_process_input(true)
-	
+
 	spawn_red_pieces_randomly()
-	
+
 	if board_texture:
 		board_texture.queue_redraw()
-		
+
 	update_status_msg()
 
 # Inicializa a matriz do tabuleiro com valores nulos
@@ -97,32 +106,32 @@ func init_board():
 func spawn_red_pieces_randomly():
 	var red_levels = [1, 1, 2, 2, 3, 3, 4, 4]
 	red_levels.shuffle()
-	
+
 	var possible_positions = []
 	for x in range(GRID_SIZE):
 		possible_positions.append(Vector2i(x, 6))
 		possible_positions.append(Vector2i(x, 7))
-	
+
 	for lvl in red_levels:
 		var random_index = randi() % possible_positions.size()
 		var chosen_pos = possible_positions[random_index]
-		
+
 		while chosen_pos == RED_FLAG:
 			random_index = randi() % possible_positions.size()
 			chosen_pos = possible_positions[random_index]
-		
+
 		possible_positions.remove_at(random_index)
 		create_piece_at(GamePiece.Player.RED, lvl, chosen_pos)
 
 func create_piece_at(player: GamePiece.Player, level: int, grid_pos: Vector2i):
 	var piece_scene = load("res://piece.tscn")
 	var piece = piece_scene.instantiate() as GamePiece
-	
+
 	pieces_container.add_child(piece)
 	piece.setup(player, level, grid_pos)
-	
+
 	piece.position = Vector2(
-		grid_pos.x * CELL_SIZE + CELL_SIZE/2.0, 
+		grid_pos.x * CELL_SIZE + CELL_SIZE/2.0,
 		grid_pos.y * CELL_SIZE + CELL_SIZE/2.0 + OFFSET_Y
 	)
 	board[grid_pos.x][grid_pos.y] = piece
@@ -144,18 +153,24 @@ func update_status_msg():
 			else:
 				status_label.text = "Fim de Jogo"
 
-# Detecta cliques do jogador
+# Detecta a tecla Esc e os cliques do jogador
 func _input(event):
+	if event is InputEventKey and event.keycode == KEY_ESCAPE and event.pressed and not event.echo:
+		get_viewport().set_input_as_handled()
+		pause_layer.show()
+		get_tree().paused = true
+		return
+
 	if current_state == GameState.GAME_OVER or is_animating:
 		return
-		
+
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.position.x >= GRID_SIZE * CELL_SIZE:
 			return
-			
+
 		var adjusted_click_y = event.position.y - OFFSET_Y
 		var grid_click = Vector2i(floor(event.position.x / CELL_SIZE), floor(adjusted_click_y / CELL_SIZE))
-		
+
 		if grid_click.x >= 0 and grid_click.x < GRID_SIZE and grid_click.y >= 0 and grid_click.y < GRID_SIZE:
 			if current_state == GameState.SETUP_AZUL:
 				handle_setup_click(grid_click)
@@ -171,38 +186,38 @@ func handle_setup_click(grid_pos: Vector2i):
 		return
 	if board[grid_pos.x][grid_pos.y] != null:
 		return
-		
+
 	play_sfx(snd_clique)
 	var current_lvl = blue_pieces_to_place.pop_front()
 	create_piece_at(GamePiece.Player.BLUE, current_lvl, grid_pos)
-	
+
 	if blue_pieces_to_place.size() > 0:
 		update_status_msg()
 	else:
 		current_state = GameState.PLAYING
 		update_status_msg()
-		
+
 	# MODIFICAÇÃO N3: Força o redesenho após o clique para atualizar ou remover o tom azulado das casas
 	if board_texture:
 		board_texture.queue_redraw()
 
 func handle_grid_click(grid_pos: Vector2i):
 	var clicked_piece = board[grid_pos.x][grid_pos.y]
-	
+
 	if clicked_piece and clicked_piece.player_owner == current_turn:
 		selected_piece = clicked_piece
 		play_sfx(snd_clique)
 		return
-		
+
 	if selected_piece:
 		if is_valid_move(selected_piece.grid_position, grid_pos):
 			var piece_to_move = selected_piece
 			selected_piece = null
-			
+
 			is_animating = true
 			await move_piece(piece_to_move, grid_pos)
 			is_animating = false
-			
+
 			check_victory_conditions()
 			if current_state != GameState.GAME_OVER:
 				switch_turn()
@@ -210,45 +225,45 @@ func handle_grid_click(grid_pos: Vector2i):
 func is_valid_move(from: Vector2i, to: Vector2i) -> bool:
 	var distance = to - from
 	var is_one_step_move = (abs(distance.x) == 1 and distance.y == 0) or (abs(distance.y) == 1 and distance.x == 0)
-	
+
 	if not is_one_step_move:
 		return false
 	if board[to.x][to.y] != null:
 		return false
-		
+
 	return true
 
 func move_piece(piece: GamePiece, to_pos: Vector2i):
 	var from_pos = piece.grid_position
-	
+
 	board[from_pos.x][from_pos.y] = null
 	board[to_pos.x][to_pos.y] = piece
 	piece.grid_position = to_pos
-	
+
 	var target_pixel_pos = Vector2(
-		to_pos.x * CELL_SIZE + CELL_SIZE/2.0, 
+		to_pos.x * CELL_SIZE + CELL_SIZE/2.0,
 		to_pos.y * CELL_SIZE + CELL_SIZE/2.0 + OFFSET_Y
 	)
-	
+
 	play_sfx(snd_movimento)
-	
+
 	var tween = create_tween()
 	tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tween.tween_property(piece, "position", target_pixel_pos, 0.3)
 	await tween.finished
-	
+
 	await check_for_combat(piece)
 
 # Remove a peça individual suavizando escala e opacidade ao mesmo tempo
 func remove_piece_with_animation(piece: GamePiece):
 	if not piece:
 		return
-		
+
 	var tween = create_tween()
 	tween.set_parallel(true)
 	tween.tween_property(piece, "scale", Vector2.ZERO, 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tween.tween_property(piece, "modulate:a", 0.0, 0.3)
-	
+
 	await tween.finished
 	piece.queue_free()
 
@@ -256,31 +271,31 @@ func remove_piece_with_animation(piece: GamePiece):
 func check_for_combat(moved_piece: GamePiece):
 	var pos = moved_piece.grid_position
 	var directions = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-	
+
 	var inimigos_adjacentes = []
-	
+
 	for dir in directions:
 		var target_pos = pos + dir
 		if target_pos.x >= 0 and target_pos.x < GRID_SIZE and target_pos.y >= 0 and target_pos.y < GRID_SIZE:
 			var neighbor = board[target_pos.x][target_pos.y]
 			if neighbor and neighbor.player_owner != moved_piece.player_owner:
 				inimigos_adjacentes.append(neighbor)
-	
+
 	if inimigos_adjacentes.size() >= 2:
 		var time_texto = "AZUL" if moved_piece.player_owner == GamePiece.Player.BLUE else "VERMELHO"
 		print("CERCO! A peça ", time_texto, " em ", pos, " entrou em combate com ", inimigos_adjacentes.size(), " inimigos!")
-		
+
 		moved_piece.reveal_level()
 		for inimigo in inimigos_adjacentes:
 			inimigo.reveal_level()
-			
+
 		play_sfx(snd_combate1)
-		await get_tree().create_timer(1.0).timeout
+		await get_tree().create_timer(1.0, false).timeout
 		play_sfx(snd_combate2)
-		
+
 		board[pos.x][pos.y] = null
 		await remove_piece_with_animation(moved_piece)
-		
+
 	elif inimigos_adjacentes.size() == 1:
 		await resolve_proximity_combat(moved_piece, inimigos_adjacentes[0])
 
@@ -288,11 +303,11 @@ func check_for_combat(moved_piece: GamePiece):
 func resolve_proximity_combat(attacker: GamePiece, defender: GamePiece):
 	attacker.reveal_level()
 	defender.reveal_level()
-	
+
 	play_sfx(snd_combate1)
-	await get_tree().create_timer(1.5).timeout
+	await get_tree().create_timer(1.5, false).timeout
 	play_sfx(snd_combate2)
-	
+
 	if attacker.level > defender.level:
 		print("Atacante nível ", attacker.level, " venceu! Defensor nível ", defender.level, " foi eliminado.")
 		board[defender.grid_position.x][defender.grid_position.y] = null
@@ -305,34 +320,34 @@ func resolve_proximity_combat(attacker: GamePiece, defender: GamePiece):
 		print("Empate! Ambos nível ", attacker.level, " foram eliminados.")
 		board[attacker.grid_position.x][attacker.grid_position.y] = null
 		board[defender.grid_position.x][defender.grid_position.y] = null
-		
+
 		var tween_att = create_tween().set_parallel(true)
 		tween_att.tween_property(attacker, "scale", Vector2.ZERO, 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 		tween_att.tween_property(attacker, "modulate:a", 0.0, 0.3)
-		
+
 		var tween_def = create_tween().set_parallel(true)
 		tween_def.tween_property(defender, "scale", Vector2.ZERO, 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 		tween_def.tween_property(defender, "modulate:a", 0.0, 0.3)
-		
+
 		await tween_att.finished
 		await tween_def.finished
-		
+
 		attacker.queue_free()
 		defender.queue_free()
 
 func switch_turn():
 	current_turn = GamePiece.Player.RED if current_turn == GamePiece.Player.BLUE else GamePiece.Player.BLUE
 	update_status_msg()
-	
+
 	if current_turn == GamePiece.Player.RED and current_state == GameState.PLAYING:
-		await get_tree().create_timer(0.5).timeout
+		await get_tree().create_timer(0.5, false).timeout
 		jogada_simulada()
 
 func jogada_simulada():
 	var todas_as_jogadas_possiveis = []
 	var direcoes_para_frente_e_lados = [Vector2i(0, -1), Vector2i(1, 0), Vector2i(-1, 0)]
 	var todas_as_direcoes = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-	
+
 	for x in range(GRID_SIZE):
 		for y in range(GRID_SIZE):
 			var peca = board[x][y]
@@ -344,7 +359,7 @@ func jogada_simulada():
 					if destino.x >= 0 and destino.x < GRID_SIZE and destino.y >= 0 and destino.y < GRID_SIZE:
 						if is_valid_move(peca.grid_position, destino):
 							todas_as_jogadas_possiveis.append({"peca": peca, "destino": destino})
-							
+
 	if todas_as_jogadas_possiveis.size() == 0:
 		for x in range(GRID_SIZE):
 			for y in range(GRID_SIZE):
@@ -357,31 +372,31 @@ func jogada_simulada():
 						if destino.x >= 0 and destino.x < GRID_SIZE and destino.y >= 0 and destino.y < GRID_SIZE:
 							if is_valid_move(peca.grid_position, destino):
 								todas_as_jogadas_possiveis.append({"peca": peca, "destino": destino})
-	
+
 	if todas_as_jogadas_possiveis.size() > 0:
 		var jogada_sorteada = todas_as_jogadas_possiveis[randi() % todas_as_jogadas_possiveis.size()]
 		var peca_ia = jogada_sorteada["peca"]
 		var destino_ia = jogada_sorteada["destino"]
-		
+
 		await move_piece(peca_ia, destino_ia)
-		
+
 	check_victory_conditions()
 	if current_state != GameState.GAME_OVER:
 		switch_turn()
 
 func check_victory_conditions():
 	var game_should_end = false
-	
+
 	if board[BLUE_FLAG.x][BLUE_FLAG.y] != null and board[BLUE_FLAG.x][BLUE_FLAG.y].player_owner == GamePiece.Player.RED:
 		game_should_end = true
 		winner_player = GamePiece.Player.RED
 		print("FIM DE JOGO: O time Vermelho capturou a bandeira Azul!")
-		
+
 	elif board[RED_FLAG.x][RED_FLAG.y] != null and board[RED_FLAG.x][RED_FLAG.y].player_owner == GamePiece.Player.BLUE:
 		game_should_end = true
 		winner_player = GamePiece.Player.BLUE
 		print("FIM DE JOGO: O time Azul capturou a bandeira Vermelha!")
-		
+
 	if not game_should_end:
 		var blue_alive = false
 		var red_alive = false
@@ -391,7 +406,7 @@ func check_victory_conditions():
 				if p:
 					if p.player_owner == GamePiece.Player.BLUE: blue_alive = true
 					if p.player_owner == GamePiece.Player.RED: red_alive = true
-					
+
 		if not blue_alive:
 			game_should_end = true
 			winner_player = GamePiece.Player.RED
@@ -400,7 +415,7 @@ func check_victory_conditions():
 			game_should_end = true
 			winner_player = GamePiece.Player.BLUE
 			print("FIM DE JOGO: Todas as peças vermelhas foram eliminadas!")
-			
+
 	if game_should_end:
 		current_state = GameState.GAME_OVER
 		update_status_msg()
@@ -408,6 +423,7 @@ func check_victory_conditions():
 
 func declare_winner():
 	reset_button.visible = true
+	botoes_fim_partida.show()
 
 # Responde ao sinal de desenho da textura de fundo para pintar overlays por cima dela
 func _on_board_texture_draw():
@@ -427,16 +443,16 @@ func _on_board_texture_draw():
 			var cell_rect = Rect2(x * CELL_SIZE, y * CELL_SIZE + OFFSET_Y, CELL_SIZE, CELL_SIZE)
 			var border_color = Color(1.0, 1.0, 1.0, 0.25)
 			board_texture.draw_rect(cell_rect, border_color, false, 1.0)
-			
+
 	# 3. Desenha as bandeiras/objetivos
 	var rect_blue_flag = Rect2(BLUE_FLAG.x * CELL_SIZE, BLUE_FLAG.y * CELL_SIZE + OFFSET_Y, CELL_SIZE, CELL_SIZE)
 	var rect_red_flag = Rect2(RED_FLAG.x * CELL_SIZE, RED_FLAG.y * CELL_SIZE + OFFSET_Y, CELL_SIZE, CELL_SIZE)
-	
+
 	if tex_bandeira_azul:
 		board_texture.draw_texture_rect(tex_bandeira_azul, rect_blue_flag, false)
 	else:
 		board_texture.draw_rect(rect_blue_flag, Color(0.0, 0.6, 1.0, 0.6), false, 2.0)
-		
+
 	if tex_bandeira_vermelha:
 		board_texture.draw_texture_rect(tex_bandeira_vermelha, rect_red_flag, false)
 	else:
@@ -444,3 +460,95 @@ func _on_board_texture_draw():
 
 func _on_reset_button_pressed():
 	start_new_game()
+
+# Cria o menu sobre o tabuleiro e mantém seus botões ativos durante a pausa
+func criar_menu_pausa() -> void:
+	pause_layer = CanvasLayer.new()
+	pause_layer.layer = 100
+	pause_layer.process_mode = Node.PROCESS_MODE_WHEN_PAUSED
+	add_child(pause_layer)
+
+	var fundo := ColorRect.new()
+	fundo.color = Color(0.0, 0.0, 0.0, 0.65)
+	fundo.mouse_filter = Control.MOUSE_FILTER_STOP
+	pause_layer.add_child(fundo)
+	fundo.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var centro := CenterContainer.new()
+	fundo.add_child(centro)
+	centro.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var painel := PanelContainer.new()
+	painel.custom_minimum_size = Vector2(280, 0)
+	centro.add_child(painel)
+
+	var margem := MarginContainer.new()
+	margem.add_theme_constant_override("margin_left", 24)
+	margem.add_theme_constant_override("margin_right", 24)
+	margem.add_theme_constant_override("margin_top", 20)
+	margem.add_theme_constant_override("margin_bottom", 20)
+	painel.add_child(margem)
+
+	var opcoes := VBoxContainer.new()
+	opcoes.add_theme_constant_override("separation", 12)
+	margem.add_child(opcoes)
+
+	var titulo := Label.new()
+	titulo.text = "Jogo pausado"
+	titulo.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	opcoes.add_child(titulo)
+
+	var continuar := Button.new()
+	continuar.text = "Continuar"
+	continuar.pressed.connect(continuar_partida)
+	opcoes.add_child(continuar)
+
+	var voltar := Button.new()
+	voltar.text = "Voltar ao menu inicial"
+	voltar.pressed.connect(voltar_ao_menu_inicial)
+	opcoes.add_child(voltar)
+
+	pause_layer.hide()
+
+func continuar_partida() -> void:
+	pause_layer.hide()
+	get_tree().paused = false
+
+func voltar_ao_menu_inicial() -> void:
+	if menu_scene == null:
+		push_error("Defina a cena do menu inicial no campo Menu Scene do Inspetor.")
+		return
+
+	var arvore := get_tree()
+	var erro := arvore.change_scene_to_packed(menu_scene)
+
+	if erro == OK:
+		arvore.paused = false
+	else:
+		push_error("Não foi possível abrir o menu inicial. Código: " + str(erro))
+
+# Cria os botões de fim de partida na barra lateral.
+func criar_botoes_fim_partida() -> void:
+	var sidebar := $Sidebar as Control
+	botoes_fim_partida = VBoxContainer.new()
+	botoes_fim_partida.add_theme_constant_override("separation", 8)
+	sidebar.add_child(botoes_fim_partida)
+	botoes_fim_partida.hide()
+
+	var voltar := Button.new()
+	voltar.text = "Voltar ao menu"
+	voltar.pressed.connect(voltar_ao_menu_inicial)
+	botoes_fim_partida.add_child(voltar)
+
+	var sair := Button.new()
+	sair.text = "Sair"
+	sair.pressed.connect(sair_do_jogo)
+	botoes_fim_partida.add_child(sair)
+
+	if not (sidebar is Container):
+		botoes_fim_partida.position = reset_button.position + Vector2(0, reset_button.size.y + 8)
+		botoes_fim_partida.custom_minimum_size.x = reset_button.size.x
+
+
+func sair_do_jogo() -> void:
+	get_tree().quit()
